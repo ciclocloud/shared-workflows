@@ -9,5 +9,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - name: Release Process
-        run: echo "Ejecutando proceso de Release"
+      - name: Login to Docker Hub
+        run: |
+          # Reemplazaar 'TU_USUARIO_DOCKER' por tu nombre de usuario real de Docker Hub
+          echo "${{ secrets.DOCKER_TOKEN }}" | docker login -u bapp86 --password-stdin
