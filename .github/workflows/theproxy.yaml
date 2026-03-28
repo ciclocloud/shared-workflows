@@ -1,0 +1,13 @@
+name: Reusable Release Workflow
+on:
+  workflow_call:
+    secrets:
+      DOCKER_TOKEN:
+        required: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Release Process
+        run: echo "Ejecutando proceso de Release"
