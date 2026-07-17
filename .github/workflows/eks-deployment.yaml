@@ -90,18 +90,19 @@ jobs:
         run: |
           set -euo pipefail
           
-          # 1. Abrir un túnel (port-forward) al servicio en segundo plano
-          kubectl port-forward svc/techmarket-orders-svc 3000:3000 &
+          # 1. Abrir un túnel. Mapeamos puerto local 8080 al puerto del servicio (80)
+          # Si tu service.yaml tiene otro puerto, cambia el '80' por ese valor.
+          kubectl port-forward svc/techmarket-orders-svc 8080:80 &
           PF_PID=$!
-          sleep 5 # Esperar a que el túnel se establezca
+          sleep 5 
           
-          echo "Validando candidato '${{ env.target_version }}' en localhost:3000/health"
+          echo "Validando candidato '${{ env.target_version }}' en localhost:8080/health"
           
-          # 2. Bucle de validación contra localhost
+          # 2. Bucle de validación apuntando al puerto local 8080
           SUCCESS=false
           for i in {1..6}; do
             echo "Intento $i..."
-            if curl -s http://localhost:3000/health | grep -q '"status":"OK"'; then
+            if curl -s http://localhost:8080/health | grep -q '"status":"OK"'; then
               echo "Validación exitosa."
               SUCCESS=true
               break
@@ -110,7 +111,7 @@ jobs:
           done
           
           # 3. Cerrar el túnel
-          kill $PF_PID
+          kill $PF_PID || true
           
           # 4. Validar resultado
           if [ "$SUCCESS" = false ]; then
