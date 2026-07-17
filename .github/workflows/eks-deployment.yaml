@@ -90,8 +90,7 @@ jobs:
       - name: Validación de salud (pre-switch, tráfico intacto)
         run: |
           set -euo pipefail
-          # Ajusta la URL/Puerto según tu configuración de servicio (o usa el DNS interno del servicio)
-          # Si usas preview services como tu compañero, apunta a ese puerto.
+          # URL del endpoint (asegúrate de que sea accesible desde el pipeline)
           TARGET_URL="http://techmarket-orders-svc:3000/health" 
           
           echo "Validando candidato '${{ env.target_version }}' en $TARGET_URL"
@@ -99,17 +98,17 @@ jobs:
           # Bucle de 6 intentos
           for i in {1..6}; do
             echo "Intento $i..."
-            # Intentamos obtener respuesta (usamos curl)
-            if curl -s $TARGET_URL | grep -q '"ok":true'; then
+            # Ahora buscamos la estructura real de tu JSON: {"status":"OK"...}
+            if curl -s $TARGET_URL | grep -q '"status":"OK"'; then
               echo "Validación exitosa en el intento $i."
               exit 0
             fi
             sleep 5
           done
           
-          # Si llega aquí, es que falló
           echo "Error: El candidato '${{ env.target_version }}' no superó la validación de salud; el tráfico NO se conmuta."
           exit 1
+
       - name: Switch de Tráfico (Blue-Green)
         run: |
           echo "Conmutando tráfico hacia: ${{ env.target_version }}"
