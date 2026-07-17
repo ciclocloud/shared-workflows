@@ -83,31 +83,40 @@ jobs:
           ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ inputs.aws_region }}.amazonaws.com
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          # Reemplazar la imagen en el archivo correspondiente
           sed -i "s|REPOSITORY_URI_PLACEHOLDER:latest|$ECR_REGISTRY/${{ inputs.ecr_repository }}:$IMAGE_TAG|g" k8s/deployment-${{ env.target_version }}.yaml
           kubectl apply -f k8s/deployment-${{ env.target_version }}.yaml
 
       - name: Validación de salud (pre-switch, tráfico intacto)
         run: |
           set -euo pipefail
-          # URL del endpoint (asegúrate de que sea accesible desde el pipeline)
-          TARGET_URL="http://techmarket-orders-svc:3000/health" 
           
-          echo "Validando candidato '${{ env.target_version }}' en $TARGET_URL"
+          # 1. Abrir un túnel (port-forward) al servicio en segundo plano
+          kubectl port-forward svc/techmarket-orders-svc 3000:3000 &
+          PF_PID=$!
+          sleep 5 # Esperar a que el túnel se establezca
           
-          # Bucle de 6 intentos
+          echo "Validando candidato '${{ env.target_version }}' en localhost:3000/health"
+          
+          # 2. Bucle de validación contra localhost
+          SUCCESS=false
           for i in {1..6}; do
             echo "Intento $i..."
-            # Ahora buscamos la estructura real de tu JSON: {"status":"OK"...}
-            if curl -s $TARGET_URL | grep -q '"status":"OK"'; then
-              echo "Validación exitosa en el intento $i."
-              exit 0
+            if curl -s http://localhost:3000/health | grep -q '"status":"OK"'; then
+              echo "Validación exitosa."
+              SUCCESS=true
+              break
             fi
             sleep 5
           done
           
-          echo "Error: El candidato '${{ env.target_version }}' no superó la validación de salud; el tráfico NO se conmuta."
-          exit 1
+          # 3. Cerrar el túnel
+          kill $PF_PID
+          
+          # 4. Validar resultado
+          if [ "$SUCCESS" = false ]; then
+            echo "Error: El candidato '${{ env.target_version }}' no superó la validación."
+            exit 1
+          fi
 
       - name: Switch de Tráfico (Blue-Green)
         run: |
@@ -118,6 +127,5 @@ jobs:
         if: failure()
         run: |
           echo "Reponiendo el tráfico en el color estable..."
-          # Aquí tu lógica de rollback existente
           kubectl rollout undo deployment/techmarket-orders-${{ env.target_version }}
           echo "Rollback completado: el tráfico quedó en la última versión estable."
