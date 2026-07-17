@@ -1,4 +1,4 @@
-name: Reusable EKS Deployment Pipeline
+name: Reusable EKS Blue-Green Pipeline
 
 on:
   workflow_call:
@@ -24,7 +24,7 @@ on:
 
 jobs:
   ci-cd-pipeline:
-    name: Integración y Despliegue EKS
+    name: Integración y Despliegue Blue-Green
     runs-on: ubuntu-latest
     steps:
       - name: Checkout del código
@@ -39,7 +39,7 @@ jobs:
         working-directory: ./src
         run: npm ci
         
-      - name: Ejecutar Pruebas Unitarias (Quality Gate)
+      - name: Ejecutar Pruebas Unitarias
         working-directory: ./src
         run: npm test
 
@@ -67,24 +67,38 @@ jobs:
       - name: Conectar al Clúster EKS
         run: aws eks update-kubeconfig --region ${{ inputs.aws_region }} --name ${{ inputs.cluster_name }}
 
-      - name: Inyectar Variables y Desplegar (Blue)
+      - name: Identificar entorno objetivo (Blue/Green)
+        id: env-selector
+        run: |
+          # Si el servicio no existe, por defecto desplegamos blue
+          CURRENT_VERSION=$(kubectl get svc techmarket-orders-svc -o jsonpath='{.spec.selector.version}' || echo "green")
+          if [ "$CURRENT_VERSION" == "blue" ]; then
+            echo "target_version=green" >> $GITHUB_ENV
+          else
+            echo "target_version=blue" >> $GITHUB_ENV
+          fi
+
+      - name: Desplegar en entorno ${{ env.target_version }}
         env:
           ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ inputs.aws_region }}.amazonaws.com
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          sed -i "s|REPOSITORY_URI_PLACEHOLDER:latest|$ECR_REGISTRY/${{ inputs.ecr_repository }}:$IMAGE_TAG|g" k8s/deployment-blue.yaml
-          kubectl apply -f k8s/service.yaml
-          kubectl apply -f k8s/deployment-blue.yaml
+          # Reemplazar la imagen en el archivo correspondiente
+          sed -i "s|REPOSITORY_URI_PLACEHOLDER:latest|$ECR_REGISTRY/${{ inputs.ecr_repository }}:$IMAGE_TAG|g" k8s/deployment-${{ env.target_version }}.yaml
+          kubectl apply -f k8s/deployment-${{ env.target_version }}.yaml
 
       - name: Validación de Salud (Quality Gate k8s)
         run: |
-          kubectl rollout status deployment/techmarket-orders-blue --timeout=60s
+          kubectl rollout status deployment/techmarket-orders-${{ env.target_version }} --timeout=60s
+
+      - name: Switch de Tráfico (Blue-Green)
+        run: |
+          echo "Conmutando tráfico hacia: ${{ env.target_version }}"
+          kubectl patch svc techmarket-orders-svc -p '{"spec":{"selector":{"version":"${{ env.target_version }}"}}}'
 
       - name: Mecanismo de Rollback Automático
         if: failure()
         run: |
-          echo "Alerta: Fallo en la validación de salud detectado."
-          echo "Iniciando reversión automática (Auto-Healing)..."
-          kubectl rollout undo deployment/techmarket-orders-blue
-          kubectl rollout status deployment/techmarket-orders-blue --timeout=60s
+          echo "Alerta: Fallo en la validación o despliegue. Iniciando rollback."
+          kubectl rollout undo deployment/techmarket-orders-${{ env.target_version }}
           exit 1
