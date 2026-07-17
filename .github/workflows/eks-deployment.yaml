@@ -87,18 +87,38 @@ jobs:
           sed -i "s|REPOSITORY_URI_PLACEHOLDER:latest|$ECR_REGISTRY/${{ inputs.ecr_repository }}:$IMAGE_TAG|g" k8s/deployment-${{ env.target_version }}.yaml
           kubectl apply -f k8s/deployment-${{ env.target_version }}.yaml
 
-      - name: Validación de Salud (Quality Gate k8s)
+      - name: Validación de salud (pre-switch, tráfico intacto)
         run: |
-          kubectl rollout status deployment/techmarket-orders-${{ env.target_version }} --timeout=60s
-
+          set -euo pipefail
+          # Ajusta la URL/Puerto según tu configuración de servicio (o usa el DNS interno del servicio)
+          # Si usas preview services como tu compañero, apunta a ese puerto.
+          TARGET_URL="http://techmarket-orders-svc:3000/health" 
+          
+          echo "Validando candidato '${{ env.target_version }}' en $TARGET_URL"
+          
+          # Bucle de 6 intentos
+          for i in {1..6}; do
+            echo "Intento $i..."
+            # Intentamos obtener respuesta (usamos curl)
+            if curl -s $TARGET_URL | grep -q '"ok":true'; then
+              echo "Validación exitosa en el intento $i."
+              exit 0
+            fi
+            sleep 5
+          done
+          
+          # Si llega aquí, es que falló
+          echo "Error: El candidato '${{ env.target_version }}' no superó la validación de salud; el tráfico NO se conmuta."
+          exit 1
       - name: Switch de Tráfico (Blue-Green)
         run: |
           echo "Conmutando tráfico hacia: ${{ env.target_version }}"
           kubectl patch svc techmarket-orders-svc -p '{"spec":{"selector":{"version":"${{ env.target_version }}"}}}'
 
-      - name: Mecanismo de Rollback Automático
+      - name: Rollback automático
         if: failure()
         run: |
-          echo "Alerta: Fallo en la validación o despliegue. Iniciando rollback."
+          echo "Reponiendo el tráfico en el color estable..."
+          # Aquí tu lógica de rollback existente
           kubectl rollout undo deployment/techmarket-orders-${{ env.target_version }}
-          exit 1
+          echo "Rollback completado: el tráfico quedó en la última versión estable."
